@@ -13,12 +13,14 @@ const generateQRCode = async (order) => {
   try {
     // Format theo tài liệu SePay:
     // https://qr.sepay.vn/img?acc=SO_TAI_KHOAN&bank=NGAN_HANG&amount=SO_TIEN&des=NOI_DUNG&template=TEMPLATE&download=DOWNLOAD
-    const orderCode = order.transfer_content || `DH${order.id}`;
+    // Nội dung chuyển khoản phải là 'WeddingWeb' + mã đơn hàng
+    const orderCode = order.transfer_content || `CHA5N5TRDU`;
+    const transferContent = `WeddingWeb${orderCode}`;
     const params = new URLSearchParams({
       acc: String(SEPAY_CONFIG.accountNumber),
       bank: String(SEPAY_CONFIG.bankCode),
       amount: String(Math.floor(Number(order.amount))),
-      des: String(orderCode),
+      des: String(transferContent),
       template: 'compact',
       download: 'false'
     });
@@ -28,7 +30,7 @@ const generateQRCode = async (order) => {
       qrUrl: qrCodeUrl,
       orderCode,
       amount: order.amount,
-      transferContent: orderCode,
+      transferContent,
       bankCode: SEPAY_CONFIG.bankCode,
       accountNumber: SEPAY_CONFIG.accountNumber
     };
@@ -77,8 +79,8 @@ const requestPayment = async (userId, slotQuantity = 1, amount = null) => {
       updated_at: new Date()
     });
 
-    // Update transfer_content with order ID in format DH{id}
-    const orderCode = `DH${order.id}`;
+    // Update transfer_content with order ID in format CHA5N5TRDU or similar (no WeddingWeb prefix)
+    const orderCode = `CHA5N5TRDU`;
     order.transfer_content = orderCode;
     await order.save();
 
