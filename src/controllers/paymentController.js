@@ -112,10 +112,41 @@ const cancelOrder = async (req, res) => {
   }
 };
 
+/**
+ * Kiểm tra trạng thái thanh toán của đơn hàng
+ * Dùng cho AJAX endpoint từ frontend (checkout page)
+ * Frontend sẽ định kỳ poll endpoint này để kiểm tra xem thanh toán có thành công chưa
+ */
+const checkPaymentStatus = async (req, res) => {
+  try {
+    const { orderId } = req.body;
+    const userId = req.user?.id; // Có thể optional tùy setup security
+
+    if (!orderId) {
+      return res.status(400).json({
+        success: false,
+        message: 'Thiếu orderId'
+      });
+    }
+
+    const data = await paymentService.checkPaymentStatus(orderId, userId);
+    return res.status(200).json({
+      success: true,
+      data
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: error.message || 'Kiểm tra trạng thái thanh toán thất bại'
+    });
+  }
+};
+
 module.exports = {
   requestPayment,
   handleWebhook,
   getOrderDetails,
   getUserOrders,
-  cancelOrder
+  cancelOrder,
+  checkPaymentStatus
 };

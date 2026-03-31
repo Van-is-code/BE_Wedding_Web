@@ -10,6 +10,9 @@ router.post('/request-payment', authenticate, paymentController.requestPayment);
 // POST - Webhook callback từ Sepay
 router.post('/webhook', paymentController.handleWebhook);
 
+// POST - Kiểm tra trạng thái thanh toán (từ frontend AJAX)
+router.post('/check-payment-status', paymentController.checkPaymentStatus);
+
 // GET - Lấy chi tiết đơn hàng
 router.get('/orders/:orderId', authenticate, paymentController.getOrderDetails);
 

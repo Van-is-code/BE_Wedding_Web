@@ -10,6 +10,7 @@ const Groom = require('./Groom');
 const Bride = require('./Bride');
 const Order = require('./Order');
 const Invoice = require('./Invoice');
+const Transaction = require('./Transaction');
 
 // users.id -> *.users_id
 User.hasMany(Invitation, { foreignKey: 'users_id', as: 'invitations' });
@@ -66,6 +67,10 @@ Order.belongsTo(User, { foreignKey: 'users_id', as: 'user' });
 Order.hasOne(Invoice, { foreignKey: 'order_id', as: 'invoice' });
 Invoice.belongsTo(Order, { foreignKey: 'order_id', as: 'order' });
 
+// orders.id -> transactions.order_id
+Order.hasMany(Transaction, { foreignKey: 'order_id', as: 'transactions' });
+Transaction.belongsTo(Order, { foreignKey: 'order_id', as: 'order' });
+
 module.exports = {
   sequelize,
   User,
@@ -78,5 +83,6 @@ module.exports = {
   Groom,
   Bride,
   Order,
-  Invoice
+  Invoice,
+  Transaction
 };

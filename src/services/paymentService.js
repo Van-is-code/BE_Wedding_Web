@@ -4,46 +4,26 @@ const { Order, Invoice, User } = require('../models');
 const SEPAY_CONFIG = {
   apiUrl: process.env.SEPAY_API_URL || 'https://api.sepay.vn/v2',
   apiKey: process.env.SECRET_KEY || process.env.SEPAY_API_KEY || '',
-  partnerCode: process.env.MERCHANT_ID || process.env.SEPAY_PARTNER_CODE || ''
+  partnerCode: process.env.MERCHANT_ID || process.env.SEPAY_PARTNER_CODE || '',
+  // Bank account details for QR generation (from .env)
+  bankCode: process.env.SEPAY_BANK_CODE || 'MBBank', // E.g., MBBank, VCB, etc.
+  accountNumber: process.env.SEPAY_ACCOUNT_NUMBER || '0903252427'
 };
-
-const randomUpperAlphaNumeric = (length = 10) => {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  const bytes = crypto.randomBytes(length);
-  let result = '';
-
-  for (let index = 0; index < length; index += 1) {
-    result += chars[bytes[index] % chars.length];
-  }
-
-  return result;
-};
-
-const generateTransferContent = () => `WeddingWeb${randomUpperAlphaNumeric(10)}`;
 
 const generateQRCode = async (order) => {
   try {
-    const script = `
-    <html>
-      <body>
-        <p>Vui lòng quét mã QR để thanh toán</p>
-        <p>Số tiền: ${order.amount.toLocaleString('vi-VN')} VND</p>
-        <p>Đơn hàng: ${order.id}</p>
-        <p>Nội dung CK: ${order.transfer_content}</p>
-      </body>
-    </html>
-    `;
-
-    // For now, we'll return QR code generation data
-    // In production, you should integrate with actual Sepay API
-    const qrCodeUrl = `${SEPAY_CONFIG.apiUrl}/qr-pay?partner=${SEPAY_CONFIG.partnerCode}&amount=${order.amount}&orderCode=${order.id}&description=${encodeURIComponent(order.transfer_content)}`;
+    // Generate QR using VietQR standard via https://qr.sepay.vn
+    // Format: https://qr.sepay.vn/img?bank=BANK_CODE&acc=ACCOUNT_NUMBER&amount=AMOUNT&des=ORDER_CODE&template=TEMPLATE
+    const orderCode = `DH${order.id}`; // Mã đơn hàng trong nội dung CK
+    const qrCodeUrl = `https://qr.sepay.vn/img?bank=${SEPAY_CONFIG.bankCode}&acc=${SEPAY_CONFIG.accountNumber}&amount=${Math.floor(order.amount)}&des=${encodeURIComponent(orderCode)}&template=compact`;
 
     return {
       qrUrl: qrCodeUrl,
-      orderCode: order.id,
+      orderCode: orderCode,
       amount: order.amount,
-      transferContent: order.transfer_content,
-      html: script
+      transferContent: orderCode,
+      bankCode: SEPAY_CONFIG.bankCode,
+      accountNumber: SEPAY_CONFIG.accountNumber
     };
   } catch (error) {
     const err = new Error('Lỗi tạo mã QR thanh toán');
@@ -78,7 +58,6 @@ const requestPayment = async (userId, slotQuantity = 1, amount = null) => {
     }
 
     const totalAmount = normalizedAmount;
-    const transferContent = generateTransferContent();
 
     // Tạo đơn hàng
     const order = await Order.create({
@@ -86,10 +65,15 @@ const requestPayment = async (userId, slotQuantity = 1, amount = null) => {
       amount: totalAmount,
       slot_quantity: normalizedSlotQuantity,
       status: 'pending',
-      transfer_content: transferContent,
+      transfer_content: '', // Will be set after order creation with DH prefix
       created_at: new Date(),
       updated_at: new Date()
     });
+
+    // Update transfer_content with order ID in format DH{id}
+    const orderCode = `DH${order.id}`;
+    order.transfer_content = orderCode;
+    await order.save();
 
     // Tạo QR code
     const qrData = await generateQRCode(order);
@@ -115,65 +99,212 @@ const requestPayment = async (userId, slotQuantity = 1, amount = null) => {
 
 const handleWebhook = async (webhookData) => {
   try {
-    const { orderCode, transactionCode, amount, status, transferContent, description, content } = webhookData;
+    // Webhook data structure from Sepay:
+    // {
+    //   id: sepay_transaction_id,
+    //   gateway: bank_name,
+    //   transactionDate: transaction_time,
+    //   accountNumber: bank_account,
+    //   code: optional_code,
+    //   content: transfer_content (nội dung chuyển khoản),
+    //   transferType: 'in' or 'out',
+    //   transferAmount: amount,
+    //   accumulated: balance,
+    //   subAccount: sub_account,
+    //   referenceCode: reference_code,
+    //   description: full_description
+    // }
 
-    // Kiểm tra order tồn tại
+    const {
+      id: transactionId,
+      gateway,
+      transactionDate,
+      accountNumber,
+      code,
+      content: transferContent,
+      transferType,
+      transferAmount,
+      accumulated,
+      subAccount,
+      referenceCode,
+      description
+    } = webhookData;
+
+    // Chỉ xử lý giao dịch tiền vào (in)
+    if (transferType !== 'in') {
+      return {
+        success: true,
+        message: 'Chỉ xử lý giao dịch tiền vào'
+      };
+    }
+
+    // Kiểm tra transaction có xảy ra trùng lặp không (chống webhook retry)
+    // Bằng cách kiểm tra nếu transaction ID đã được lưu trong hệ thống
+    const Transaction = require('../models/Transaction'); // Sẽ tạo model này
+    const existingTransaction = await Transaction.findOne({
+      where: { transaction_id: transactionId }
+    });
+
+    if (existingTransaction) {
+      return {
+        success: true,
+        message: 'Giao dịch đã được xử lý trước đó'
+      };
+    }
+
+    // Trích xuất Order ID từ nội dung chuyển khoản bằng regex
+    // Mã đơn hàng có format: DH{order_id}, vd: DH550e8400e29b41d4a716446655440000
+    const orderIdRegex = /DH([\w-]+)/i;
+    const match = transferContent.match(orderIdRegex);
+
+    if (!match || !match[1]) {
+      // Lưu transaction nhưng không thể tìm đơn hàng
+      await Transaction.create({
+        transaction_id: transactionId,
+        gateway,
+        transaction_date: transactionDate,
+        account_number: accountNumber,
+        sub_account: subAccount,
+        amount_in: Math.floor(transferAmount),
+        amount_out: 0,
+        accumulated: Math.floor(accumulated),
+        code,
+        transaction_content: transferContent,
+        reference_number: referenceCode,
+        body: description,
+        order_id: null,
+        status: 'unmatched',
+        created_at: new Date(),
+        updated_at: new Date()
+      });
+
+      return {
+        success: false,
+        message: 'Không tìm thấy mã đơn hàng trong nội dung chuyển khoản'
+      };
+    }
+
+    const orderId = match[1];
+
+    // Tìm đơn hàng
     const order = await Order.findOne({
-      where: { id: orderCode },
+      where: { id: orderId },
       include: [{ model: User, as: 'user' }]
     });
 
     if (!order) {
-      const error = new Error('Không tìm thấy đơn hàng');
-      error.status = 404;
-      throw error;
-    }
+      // Lưu transaction nhưng không tìm thấy đơn hàng
+      await Transaction.create({
+        transaction_id: transactionId,
+        gateway,
+        transaction_date: transactionDate,
+        account_number: accountNumber,
+        sub_account: subAccount,
+        amount_in: Math.floor(transferAmount),
+        amount_out: 0,
+        accumulated: Math.floor(accumulated),
+        code,
+        transaction_content: transferContent,
+        reference_number: referenceCode,
+        body: description,
+        order_id: orderId,
+        status: 'order_not_found',
+        created_at: new Date(),
+        updated_at: new Date()
+      });
 
-    // Kiểm tra trạng thái thanh toán
-    if (status !== 'success' && status !== 1) {
-      const error = new Error('Thanh toán không thành công');
-      error.status = 400;
-      throw error;
-    }
-
-    // Kiểm tra số tiền
-    if (parseInt(amount, 10) !== parseInt(order.amount, 10)) {
-      const error = new Error('Số tiền không khớp');
-      error.status = 400;
-      throw error;
-    }
-
-    // Ưu tiên xác thực nội dung chuyển khoản nếu webhook có gửi lên
-    const webhookTransferContent = transferContent || description || content;
-    if (webhookTransferContent && webhookTransferContent !== order.transfer_content) {
-      const error = new Error('Nội dung chuyển khoản không khớp');
-      error.status = 400;
-      throw error;
-    }
-
-    if (order.status === 'paid') {
       return {
-        success: true,
-        message: 'Đơn hàng đã được ghi nhận thanh toán trước đó',
-        order: {
-          id: order.id,
-          status: order.status,
-          slotAdded: 0
-        }
+        success: false,
+        message: `Không tìm thấy đơn hàng với ID: ${orderId}`
       };
     }
 
-    // Update order status
+    // Kiểm tra số tiền khớp
+    if (Math.floor(transferAmount) !== Math.floor(order.amount)) {
+      await Transaction.create({
+        transaction_id: transactionId,
+        gateway,
+        transaction_date: transactionDate,
+        account_number: accountNumber,
+        sub_account: subAccount,
+        amount_in: Math.floor(transferAmount),
+        amount_out: 0,
+        accumulated: Math.floor(accumulated),
+        code,
+        transaction_content: transferContent,
+        reference_number: referenceCode,
+        body: description,
+        order_id: orderId,
+        status: 'amount_mismatch',
+        created_at: new Date(),
+        updated_at: new Date()
+      });
+
+      return {
+        success: false,
+        message: `Số tiền không khớp. Yêu cầu: ${order.amount}, Nhận: ${transferAmount}`
+      };
+    }
+
+    // Kiểm tra nếu đơn hàng đã được thanh toán rồi
+    if (order.status === 'paid') {
+      // Vẫn lưu transaction nhưng trả về success để không retry webhook
+      await Transaction.create({
+        transaction_id: transactionId,
+        gateway,
+        transaction_date: transactionDate,
+        account_number: accountNumber,
+        sub_account: subAccount,
+        amount_in: Math.floor(transferAmount),
+        amount_out: 0,
+        accumulated: Math.floor(accumulated),
+        code,
+        transaction_content: transferContent,
+        reference_number: referenceCode,
+        body: description,
+        order_id: orderId,
+        status: 'duplicate_order',
+        created_at: new Date(),
+        updated_at: new Date()
+      });
+
+      return {
+        success: true,
+        message: 'Đơn hàng đã được ghi nhận thanh toán trước đó'
+      };
+    }
+
+    // Cập nhật trạng thái đơn hàng thành paid
     order.status = 'paid';
-    order.transaction_id = transactionCode;
+    order.transaction_id = transactionId;
     order.updated_at = new Date();
     await order.save();
+
+    // Lưu transaction với status success
+    await Transaction.create({
+      transaction_id: transactionId,
+      gateway,
+      transaction_date: transactionDate,
+      account_number: accountNumber,
+      sub_account: subAccount,
+      amount_in: Math.floor(transferAmount),
+      amount_out: 0,
+      accumulated: Math.floor(accumulated),
+      code,
+      transaction_content: transferContent,
+      reference_number: referenceCode,
+      body: description,
+      order_id: orderId,
+      status: 'success',
+      created_at: new Date(),
+      updated_at: new Date()
+    });
 
     // Tạo invoice
     await Invoice.create({
       order_id: order.id,
-      transaction_id: transactionCode,
-      transfer_content: order.transfer_content,
+      transaction_id: transactionId,
+      transfer_content: transferContent,
       payment_method: 'sepay',
       paid_at: new Date(),
       created_at: new Date(),
@@ -194,11 +325,13 @@ const handleWebhook = async (webhookData) => {
       }
     };
   } catch (error) {
-    if (error.status) throw error;
-    const err = new Error('Lỗi xử lý webhook thanh toán');
-    err.status = 500;
-    err.originalError = error;
-    throw err;
+    console.error('Error in handleWebhook:', error);
+    // Trả về success để Sepay không retry, nhưng lưu error log
+    return {
+      success: false,
+      message: error.message || 'Lỗi xử lý webhook thanh toán',
+      error: error.originalError || error
+    };
   }
 };
 
@@ -293,10 +426,49 @@ const cancelOrder = async (orderId, userId) => {
   }
 };
 
+/**
+ * Kiểm tra trạng thái thanh toán của đơn hàng
+ * Dùng cho AJAX endpoint từ frontend (checkout page)
+ * Frontend sẽ định kỳ poll endpoint này để kiểm tra xem thanh toán có thành công chưa
+ */
+const checkPaymentStatus = async (orderId, userId = null) => {
+  try {
+    const findOptions = { where: { id: orderId } };
+
+    // Nếu có userId, chỉ cho phép check order của chính mình
+    if (userId) {
+      findOptions.where.users_id = userId;
+    }
+
+    const order = await Order.findOne(findOptions);
+
+    if (!order) {
+      return {
+        payment_status: 'order_not_found',
+        message: 'Không tìm thấy đơn hàng'
+      };
+    }
+
+    return {
+      payment_status: order.status,
+      // Convert status to match Sepay format if needed
+      // pending -> Unpaid, paid -> Paid, cancelled -> Cancelled
+      message: order.status
+    };
+  } catch (error) {
+    console.error('Error checking payment status:', error);
+    return {
+      payment_status: 'error',
+      message: 'Lỗi kiểm tra trạng thái thanh toán'
+    };
+  }
+};
+
 module.exports = {
   requestPayment,
   handleWebhook,
   getOrderDetails,
   getUserOrders,
-  cancelOrder
+  cancelOrder,
+  checkPaymentStatus
 };
