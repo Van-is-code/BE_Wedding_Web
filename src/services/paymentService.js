@@ -1,5 +1,4 @@
-const crypto = require('crypto');
-const { Order, Invoice, User } = require('../models');
+const { Order, Invoice, User, Transaction } = require('../models');
 
 const SEPAY_CONFIG = {
   apiUrl: process.env.SEPAY_API_URL || 'https://api.sepay.vn/v2',
@@ -99,6 +98,13 @@ const requestPayment = async (userId, slotQuantity = 1, amount = null) => {
 
 const handleWebhook = async (webhookData) => {
   try {
+    if (!webhookData || typeof webhookData !== 'object') {
+      return {
+        success: false,
+        message: 'Webhook payload không hợp lệ'
+      };
+    }
+
     // Webhook data structure from Sepay:
     // {
     //   id: sepay_transaction_id,
@@ -130,17 +136,35 @@ const handleWebhook = async (webhookData) => {
       description
     } = webhookData;
 
+    const normalizedTransferType = String(transferType || '').toLowerCase();
+    const normalizedTransferContent = String(transferContent || '');
+    const normalizedAmount = Number.parseInt(transferAmount, 10);
+    const normalizedAccumulated = Number.parseInt(accumulated, 10);
+
     // Chỉ xử lý giao dịch tiền vào (in)
-    if (transferType !== 'in') {
+    if (normalizedTransferType !== 'in') {
       return {
         success: true,
         message: 'Chỉ xử lý giao dịch tiền vào'
       };
     }
 
+    if (!transactionId) {
+      return {
+        success: false,
+        message: 'Thiếu transaction id từ SePay'
+      };
+    }
+
+    if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
+      return {
+        success: false,
+        message: 'Số tiền giao dịch không hợp lệ'
+      };
+    }
+
     // Kiểm tra transaction có xảy ra trùng lặp không (chống webhook retry)
     // Bằng cách kiểm tra nếu transaction ID đã được lưu trong hệ thống
-    const Transaction = require('../models/Transaction'); // Sẽ tạo model này
     const existingTransaction = await Transaction.findOne({
       where: { transaction_id: transactionId }
     });
@@ -155,7 +179,7 @@ const handleWebhook = async (webhookData) => {
     // Trích xuất Order ID từ nội dung chuyển khoản bằng regex
     // Mã đơn hàng có format: DH{order_id}, vd: DH550e8400e29b41d4a716446655440000
     const orderIdRegex = /DH([\w-]+)/i;
-    const match = transferContent.match(orderIdRegex);
+    const match = normalizedTransferContent.match(orderIdRegex);
 
     if (!match || !match[1]) {
       // Lưu transaction nhưng không thể tìm đơn hàng
@@ -165,11 +189,11 @@ const handleWebhook = async (webhookData) => {
         transaction_date: transactionDate,
         account_number: accountNumber,
         sub_account: subAccount,
-        amount_in: Math.floor(transferAmount),
+        amount_in: Math.floor(normalizedAmount),
         amount_out: 0,
-        accumulated: Math.floor(accumulated),
+        accumulated: Number.isFinite(normalizedAccumulated) ? Math.floor(normalizedAccumulated) : 0,
         code,
-        transaction_content: transferContent,
+        transaction_content: normalizedTransferContent,
         reference_number: referenceCode,
         body: description,
         order_id: null,
@@ -200,11 +224,11 @@ const handleWebhook = async (webhookData) => {
         transaction_date: transactionDate,
         account_number: accountNumber,
         sub_account: subAccount,
-        amount_in: Math.floor(transferAmount),
+        amount_in: Math.floor(normalizedAmount),
         amount_out: 0,
-        accumulated: Math.floor(accumulated),
+        accumulated: Number.isFinite(normalizedAccumulated) ? Math.floor(normalizedAccumulated) : 0,
         code,
-        transaction_content: transferContent,
+        transaction_content: normalizedTransferContent,
         reference_number: referenceCode,
         body: description,
         order_id: orderId,
@@ -220,18 +244,18 @@ const handleWebhook = async (webhookData) => {
     }
 
     // Kiểm tra số tiền khớp
-    if (Math.floor(transferAmount) !== Math.floor(order.amount)) {
+    if (Math.floor(normalizedAmount) !== Math.floor(Number(order.amount))) {
       await Transaction.create({
         transaction_id: transactionId,
         gateway,
         transaction_date: transactionDate,
         account_number: accountNumber,
         sub_account: subAccount,
-        amount_in: Math.floor(transferAmount),
+        amount_in: Math.floor(normalizedAmount),
         amount_out: 0,
-        accumulated: Math.floor(accumulated),
+        accumulated: Number.isFinite(normalizedAccumulated) ? Math.floor(normalizedAccumulated) : 0,
         code,
-        transaction_content: transferContent,
+        transaction_content: normalizedTransferContent,
         reference_number: referenceCode,
         body: description,
         order_id: orderId,
@@ -242,7 +266,34 @@ const handleWebhook = async (webhookData) => {
 
       return {
         success: false,
-        message: `Số tiền không khớp. Yêu cầu: ${order.amount}, Nhận: ${transferAmount}`
+        message: `Số tiền không khớp. Yêu cầu: ${order.amount}, Nhận: ${normalizedAmount}`
+      };
+    }
+
+    // Chỉ chấp nhận đơn ở trạng thái chờ thanh toán
+    if (order.status !== 'pending') {
+      await Transaction.create({
+        transaction_id: transactionId,
+        gateway,
+        transaction_date: transactionDate,
+        account_number: accountNumber,
+        sub_account: subAccount,
+        amount_in: Math.floor(normalizedAmount),
+        amount_out: 0,
+        accumulated: Number.isFinite(normalizedAccumulated) ? Math.floor(normalizedAccumulated) : 0,
+        code,
+        transaction_content: normalizedTransferContent,
+        reference_number: referenceCode,
+        body: description,
+        order_id: orderId,
+        status: 'duplicate_order',
+        created_at: new Date(),
+        updated_at: new Date()
+      });
+
+      return {
+        success: true,
+        message: `Đơn hàng đang ở trạng thái ${order.status}, bỏ qua cập nhật` 
       };
     }
 
@@ -255,11 +306,11 @@ const handleWebhook = async (webhookData) => {
         transaction_date: transactionDate,
         account_number: accountNumber,
         sub_account: subAccount,
-        amount_in: Math.floor(transferAmount),
+        amount_in: Math.floor(normalizedAmount),
         amount_out: 0,
-        accumulated: Math.floor(accumulated),
+        accumulated: Number.isFinite(normalizedAccumulated) ? Math.floor(normalizedAccumulated) : 0,
         code,
-        transaction_content: transferContent,
+        transaction_content: normalizedTransferContent,
         reference_number: referenceCode,
         body: description,
         order_id: orderId,
@@ -304,7 +355,7 @@ const handleWebhook = async (webhookData) => {
     await Invoice.create({
       order_id: order.id,
       transaction_id: transactionId,
-      transfer_content: transferContent,
+      transfer_content: normalizedTransferContent,
       payment_method: 'sepay',
       paid_at: new Date(),
       created_at: new Date(),

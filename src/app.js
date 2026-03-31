@@ -169,6 +169,7 @@ app.use('/api/brides', brideRoutes);
 app.use('/api/bride', brideRoutes);
 app.use('/api/media-upload', mediaUploadRoutes);
 app.use('/api/payments', paymentRoutes);
+app.use('/api/payment', paymentRoutes);
 
 // Root route
 app.get('/', (req, res) => {

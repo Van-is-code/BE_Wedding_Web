@@ -119,7 +119,7 @@ const cancelOrder = async (req, res) => {
  */
 const checkPaymentStatus = async (req, res) => {
   try {
-    const { orderId } = req.body;
+    const orderId = req.body?.orderId || req.body?.order_id;
     const userId = req.user?.id; // Có thể optional tùy setup security
 
     if (!orderId) {
