@@ -146,6 +146,7 @@ const messageCheckinRoutes = require('./routes/messageCheckinRoutes');
 const groomRoutes = require('./routes/groomRoutes');
 const brideRoutes = require('./routes/brideRoutes');
 const mediaUploadRoutes = require('./routes/mediaUploadRoutes');
+const paymentRoutes = require('./routes/paymentRoutes');
 
 // API Routes
 app.use('/api/users', userRoutes);
@@ -167,6 +168,7 @@ app.use('/api/groom', groomRoutes);
 app.use('/api/brides', brideRoutes);
 app.use('/api/bride', brideRoutes);
 app.use('/api/media-upload', mediaUploadRoutes);
+app.use('/api/payments', paymentRoutes);
 
 // Root route
 app.get('/', (req, res) => {

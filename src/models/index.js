@@ -8,6 +8,8 @@ const Guest = require('./Guest');
 const MessageCheckin = require('./MessageCheckin');
 const Groom = require('./Groom');
 const Bride = require('./Bride');
+const Order = require('./Order');
+const Invoice = require('./Invoice');
 
 // users.id -> *.users_id
 User.hasMany(Invitation, { foreignKey: 'users_id', as: 'invitations' });
@@ -56,6 +58,14 @@ Invitation.belongsTo(Groom, { foreignKey: 'groom_id', as: 'groom' });
 Bride.hasMany(Invitation, { foreignKey: 'bride_id', as: 'invitationsAsBride' });
 Invitation.belongsTo(Bride, { foreignKey: 'bride_id', as: 'bride' });
 
+// users.id -> orders.users_id
+User.hasMany(Order, { foreignKey: 'users_id', as: 'orders' });
+Order.belongsTo(User, { foreignKey: 'users_id', as: 'user' });
+
+// orders.id -> invoices.order_id
+Order.hasOne(Invoice, { foreignKey: 'order_id', as: 'invoice' });
+Invoice.belongsTo(Order, { foreignKey: 'order_id', as: 'order' });
+
 module.exports = {
   sequelize,
   User,
@@ -66,5 +76,7 @@ module.exports = {
   Guest,
   MessageCheckin,
   Groom,
-  Bride
+  Bride,
+  Order,
+  Invoice
 };

@@ -22,6 +22,7 @@ module.exports = {
           username: 'admin',
           password: adminPassword,
           role: 'admin',
+          slot: 999,
           created_at: now,
           updated_at: now
         },
@@ -30,6 +31,7 @@ module.exports = {
           username: 'user',
           password: userPassword,
           role: 'user',
+          slot: 5,
           created_at: now,
           updated_at: now
         }

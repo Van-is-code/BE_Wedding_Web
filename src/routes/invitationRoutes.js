@@ -7,6 +7,7 @@ const router = express.Router();
 router.use(authenticate);
 
 router.get('/', invitationController.getAll);
+router.get('/slug/:invitation_slug', invitationController.getBySlug);
 router.get('/:id', invitationController.getById);
 router.post('/', invitationController.create);
 router.put('/:id', invitationController.update);

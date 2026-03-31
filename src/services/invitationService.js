@@ -1,7 +1,7 @@
 const { randomUUID } = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { Invitation, InvitationTemplate, Groom, Bride, InvitationImage } = require('../models');
+const { Invitation, InvitationTemplate, Groom, Bride, InvitationImage, User } = require('../models');
 
 const resourceName = 'Invitation';
 
@@ -52,6 +52,21 @@ const getById = async (id) => {
 		where: { id },
 		include: [
 			{
+				model: InvitationTemplate,
+				as: 'template',
+				required: false
+			},
+			{
+				model: Groom,
+				as: 'groom',
+				required: false
+			},
+			{
+				model: Bride,
+				as: 'bride',
+				required: false
+			},
+			{
 				model: InvitationImage,
 				as: 'images',
 				required: false
@@ -63,6 +78,42 @@ const getById = async (id) => {
 		error.status = 404;
 		throw error;
 	}
+	return item;
+};
+
+const getBySlug = async (invitationSlug) => {
+	const item = await Invitation.findOne({
+		where: { invitation_slug: invitationSlug },
+		include: [
+			{
+				model: InvitationTemplate,
+				as: 'template',
+				required: false
+			},
+			{
+				model: Groom,
+				as: 'groom',
+				required: false
+			},
+			{
+				model: Bride,
+				as: 'bride',
+				required: false
+			},
+			{
+				model: InvitationImage,
+				as: 'images',
+				required: false
+			}
+		]
+	});
+
+	if (!item) {
+		const error = new Error(`${resourceName} not found`);
+		error.status = 404;
+		throw error;
+	}
+
 	return item;
 };
 
@@ -129,6 +180,20 @@ const create = async (payload, userId) => {
 		throw error;
 	}
 
+	// Kiểm tra user và số lượt slot
+	const user = await User.findByPk(userId);
+	if (!user) {
+		const error = new Error('User không tồn tại');
+		error.status = 404;
+		throw error;
+	}
+
+	if (user.slot <= 0) {
+		const error = new Error('Bạn đã hết lượt tạo thiệp. Vui lòng nâng cấp hoặc liên hệ quản trị viên');
+		error.status = 403;
+		throw error;
+	}
+
 	const data = { ...payload };
 	delete data.id;
 	data.id = randomUUID();
@@ -144,7 +209,13 @@ const create = async (payload, userId) => {
 		data.updated_at = getNowValue(Invitation.rawAttributes.updated_at);
 	}
 
-	return Invitation.create(data);
+	// Tạo invitation và giảm slot người dùng
+	const invitation = await Invitation.create(data);
+	
+	// Trừ 1 lượt từ slot
+	await user.decrement('slot', { by: 1 });
+
+	return invitation;
 };
 
 const update = async (id, payload, userId) => {
@@ -175,4 +246,4 @@ const remove = async (id) => {
 	return true;
 };
 
-module.exports = { getAll, getById, create, update, remove };
+module.exports = { getAll, getById, getBySlug, create, update, remove };

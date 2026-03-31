@@ -18,6 +18,15 @@ const getById = async (req, res) => {
 	}
 };
 
+const getBySlug = async (req, res) => {
+	try {
+		const data = await invitationService.getBySlug(req.params.invitation_slug);
+		return res.status(200).json({ success: true, message: 'Get invitation successfully', data });
+	} catch (error) {
+		return res.status(error.status || 500).json({ success: false, message: error.message || 'Failed to get invitation' });
+	}
+};
+
 const create = async (req, res) => {
 	try {
 		const data = await invitationService.create(req.body, req.user?.id);
@@ -45,4 +54,4 @@ const remove = async (req, res) => {
 	}
 };
 
-module.exports = { getAll, getById, create, update, remove };
+module.exports = { getAll, getById, getBySlug, create, update, remove };

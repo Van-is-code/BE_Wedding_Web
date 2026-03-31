@@ -22,6 +22,7 @@ const sanitizeUser = (user) => ({
 	id: user.id,
 	username: user.username,
 	role: user.role,
+	slot: user.slot || 0,
 	created_at: user.created_at,
 	updated_at: user.updated_at
 });
@@ -46,6 +47,7 @@ const register = async ({ username, password, role = 'user' }) => {
 		username,
 		password: hashedPassword,
 		role,
+		slot: 0,
 		created_at: new Date(),
 		updated_at: new Date()
 	});
