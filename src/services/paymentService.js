@@ -11,14 +11,22 @@ const SEPAY_CONFIG = {
 
 const generateQRCode = async (order) => {
   try {
-    // Generate QR using VietQR standard via https://qr.sepay.vn
-    // Format: https://qr.sepay.vn/img?bank=BANK_CODE&acc=ACCOUNT_NUMBER&amount=AMOUNT&des=ORDER_CODE&template=TEMPLATE
-    const orderCode = `DH${order.id}`; // Mã đơn hàng trong nội dung CK
-    const qrCodeUrl = `https://qr.sepay.vn/img?bank=${SEPAY_CONFIG.bankCode}&acc=${SEPAY_CONFIG.accountNumber}&amount=${Math.floor(order.amount)}&des=${encodeURIComponent(orderCode)}&template=compact`;
+    // Format theo tài liệu SePay:
+    // https://qr.sepay.vn/img?acc=SO_TAI_KHOAN&bank=NGAN_HANG&amount=SO_TIEN&des=NOI_DUNG&template=TEMPLATE&download=DOWNLOAD
+    const orderCode = order.transfer_content || `DH${order.id}`;
+    const params = new URLSearchParams({
+      acc: String(SEPAY_CONFIG.accountNumber),
+      bank: String(SEPAY_CONFIG.bankCode),
+      amount: String(Math.floor(Number(order.amount))),
+      des: String(orderCode),
+      template: 'compact',
+      download: 'false'
+    });
+    const qrCodeUrl = `https://qr.sepay.vn/img?${params.toString()}`;
 
     return {
       qrUrl: qrCodeUrl,
-      orderCode: orderCode,
+      orderCode,
       amount: order.amount,
       transferContent: orderCode,
       bankCode: SEPAY_CONFIG.bankCode,
