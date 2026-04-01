@@ -13,9 +13,9 @@ const generateQRCode = async (order) => {
   try {
     // Format theo tài liệu SePay:
     // https://qr.sepay.vn/img?acc=SO_TAI_KHOAN&bank=NGAN_HANG&amount=SO_TIEN&des=NOI_DUNG&template=TEMPLATE&download=DOWNLOAD
-    // Nội dung chuyển khoản phải là 'WeddingWeb' + mã đơn hàng
+    // Nội dung chuyển khoản tiêu chuẩn: chỉ mã đơn hàng
     const orderCode = order.transfer_content || `CHA5N5TRDU`;
-    const transferContent = `WeddingWeb${orderCode}`;
+    const transferContent = orderCode;
     const params = new URLSearchParams({
       acc: String(SEPAY_CONFIG.accountNumber),
       bank: String(SEPAY_CONFIG.bankCode),
