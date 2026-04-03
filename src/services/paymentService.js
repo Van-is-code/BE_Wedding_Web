@@ -80,7 +80,7 @@ const requestPayment = async (userId, slotQuantity = 1, amount = null) => {
     });
 
     // Update transfer_content with order ID in default format DH{order_id}
-    const orderCode = `DH${order.id}`;
+    const orderCode = `${order.id}`;
     order.transfer_content = orderCode;
     await order.save();
 
