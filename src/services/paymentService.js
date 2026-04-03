@@ -14,7 +14,7 @@ const generateQRCode = async (order) => {
     // Format theo tài liệu SePay:
     // https://qr.sepay.vn/img?acc=SO_TAI_KHOAN&bank=NGAN_HANG&amount=SO_TIEN&des=NOI_DUNG&template=TEMPLATE&download=DOWNLOAD
     // Nội dung chuyển khoản tiêu chuẩn: chỉ mã đơn hàng
-    const orderCode = order.transfer_content || `CHA5N5TRDU`;
+    const orderCode = order.transfer_content || `DH${order.id}`;
     const transferContent = orderCode;
     const params = new URLSearchParams({
       acc: String(SEPAY_CONFIG.accountNumber),
@@ -79,8 +79,8 @@ const requestPayment = async (userId, slotQuantity = 1, amount = null) => {
       updated_at: new Date()
     });
 
-    // Update transfer_content with order ID in format CHA5N5TRDU or similar (no WeddingWeb prefix)
-    const orderCode = `CHA5N5TRDU`;
+    // Update transfer_content with order ID in default format DH{order_id}
+    const orderCode = `DH${order.id}`;
     order.transfer_content = orderCode;
     await order.save();
 
