@@ -9,6 +9,25 @@ const SEPAY_CONFIG = {
   accountNumber: process.env.SEPAY_ACCOUNT_NUMBER || '0903252427'
 };
 
+const isMissingTransactionsTableError = (error) => {
+  const message = String(error?.message || '');
+  const code = String(error?.original?.code || error?.parent?.code || error?.code || '');
+  return code === '42P01' && /transactions/i.test(message);
+};
+
+const createTransactionLog = async (payload) => {
+  try {
+    await Transaction.create(payload);
+  } catch (error) {
+    // Do not block payment success flow when audit table is missing in production.
+    if (isMissingTransactionsTableError(error)) {
+      console.warn('[Payment] transactions table is missing. Skip transaction log.');
+      return;
+    }
+    throw error;
+  }
+};
+
 const generateQRCode = async (order) => {
   try {
     // Format theo tài liệu SePay:
@@ -80,7 +99,7 @@ const requestPayment = async (userId, slotQuantity = 1, amount = null) => {
     });
 
     // Update transfer_content with order ID in default format DH{order_id}
-    const orderCode = `${order.id}`;
+    const orderCode = `DH${order.id}`;
     order.transfer_content = orderCode;
     await order.save();
 
@@ -175,9 +194,18 @@ const handleWebhook = async (webhookData) => {
 
     // Kiểm tra transaction có xảy ra trùng lặp không (chống webhook retry)
     // Bằng cách kiểm tra nếu transaction ID đã được lưu trong hệ thống
-    const existingTransaction = await Transaction.findOne({
-      where: { transaction_id: transactionId }
-    });
+    let existingTransaction = null;
+    try {
+      existingTransaction = await Transaction.findOne({
+        where: { transaction_id: transactionId }
+      });
+    } catch (error) {
+      if (isMissingTransactionsTableError(error)) {
+        console.warn('[Payment] transactions table is missing. Continue without duplicate transaction check.');
+      } else {
+        throw error;
+      }
+    }
 
     if (existingTransaction) {
       return {
@@ -193,7 +221,7 @@ const handleWebhook = async (webhookData) => {
 
     if (!match || !match[1]) {
       // Lưu transaction nhưng không thể tìm đơn hàng
-      await Transaction.create({
+      await createTransactionLog({
         transaction_id: transactionId,
         gateway,
         transaction_date: transactionDate,
@@ -228,7 +256,7 @@ const handleWebhook = async (webhookData) => {
 
     if (!order) {
       // Lưu transaction nhưng không tìm thấy đơn hàng
-      await Transaction.create({
+      await createTransactionLog({
         transaction_id: transactionId,
         gateway,
         transaction_date: transactionDate,
@@ -255,7 +283,7 @@ const handleWebhook = async (webhookData) => {
 
     // Kiểm tra số tiền khớp
     if (Math.floor(normalizedAmount) !== Math.floor(Number(order.amount))) {
-      await Transaction.create({
+      await createTransactionLog({
         transaction_id: transactionId,
         gateway,
         transaction_date: transactionDate,
@@ -282,7 +310,7 @@ const handleWebhook = async (webhookData) => {
 
     // Chỉ chấp nhận đơn ở trạng thái chờ thanh toán
     if (order.status !== 'pending') {
-      await Transaction.create({
+      await createTransactionLog({
         transaction_id: transactionId,
         gateway,
         transaction_date: transactionDate,
@@ -310,7 +338,7 @@ const handleWebhook = async (webhookData) => {
     // Kiểm tra nếu đơn hàng đã được thanh toán rồi
     if (order.status === 'paid') {
       // Vẫn lưu transaction nhưng trả về success để không retry webhook
-      await Transaction.create({
+      await createTransactionLog({
         transaction_id: transactionId,
         gateway,
         transaction_date: transactionDate,
@@ -342,7 +370,7 @@ const handleWebhook = async (webhookData) => {
     await order.save();
 
     // Lưu transaction với status success
-    await Transaction.create({
+    await createTransactionLog({
       transaction_id: transactionId,
       gateway,
       transaction_date: transactionDate,
